@@ -489,10 +489,10 @@ ISR(TIMER1_COMPB_vect)
 // secs_per_hour in fixed point format
 void set_secs_per_hour(int32_t ha_secs_per_hour)
 {
-  #define TIMER_PRESCALER 1024
-  #define PSC2 1
-  #define PSC1 0
-  #define PSC0 1
+  #define TIMER_PRESCALER_HA 1024
+  #define PSC2_HA 1
+  #define PSC1_HA 0
+  #define PSC0_HA 1
 
   cli();
   
@@ -530,10 +530,16 @@ void set_secs_per_hour(int32_t ha_secs_per_hour)
    * counter = "step delta t" / "timer tick delta t" =
    *         = 1 / "H.A. steps per second" / (TIMER_PRESCALER / F_CPU) = 
    *         = SUBSECONDS * 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER / secs_per_hour / HA_2_STEPS_A
+   *
+   *
+   * secs_per_hour / SUBSECONDS = 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER / counter / HA_2_STEPS_A. 
+   * 32 <= counter <= 65535
+   * 724 <= secs_per_hour / SUBSECONDS <= 1483154
+   *
    */
 
-  const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER / HA_2_STEPS_A;
-  const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER / DEC_2_STEPS_A;
+  const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_HA / HA_2_STEPS_A;
+//  const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_DEC / DEC_2_STEPS_A;
 
   if (ha_secs_per_hour != 0)
     delay_ha = HA_A / ha_secs_per_hour;
@@ -558,13 +564,13 @@ void set_secs_per_hour(int32_t ha_secs_per_hour)
   OCR1A = delay_ha;
   OCR1B = 2;
   TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
-  TCCR1B = (PSC2 << CS12) | (PSC1 << CS11) | (PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
+  TCCR1B = (PSC2_HA << CS12) | (PSC1_HA << CS11) | (PSC0_HA << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
   TCNT1 = 0;
   
-  #undef TIMER_PRESCALER
-  #undef PSC2
-  #undef PSC1
-  #undef PSC0
+  #undef TIMER_PRESCALER_HA
+  #undef PSC2_HA
+  #undef PSC1_HA
+  #undef PSC0_HA
 
   sei();
 }
