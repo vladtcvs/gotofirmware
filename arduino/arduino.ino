@@ -101,8 +101,6 @@
 #define RXEN RXEN0
 #define TXEN TXEN0
 
-#define TIMSK TIMSK1
-
 #define UBRR UBRR0
 #define UBRRL UBRR0L
 #define UBRRH UBRR0H
@@ -110,6 +108,9 @@
 #define UDRE UDRE0
 
 #else
+
+#define TIMSK1 TIMSK
+#define TIMSK0 TIMSK
 
 #endif
 
@@ -157,11 +158,11 @@ volatile bool transmit = false;
 uint32_t delay_ha;          // Delay between steps for H.A.
 uint32_t counter_ha;
 
-uint32_t delay_dec;         // Delay between steps for Dec.
-uint32_t counter_dec;
+volatile uint32_t delay_dec;         // Delay between steps for Dec.
+volatile uint32_t counter_dec;
 
 int32_t  ha_speed;          // H.A. speed in H mode
-//int32_t  dec_speed;         // Dec. speed in H mode
+int32_t  dec_speed;         // Dec. speed in H mode
 
 // GOTO mode vars
 
@@ -181,7 +182,7 @@ int32_t  dec;              // in steps
 bool ha_pos_dir;          // H.A. step direction
 bool dec_pos_dir;         // Dec. step direction
 
-int32_t atoi32(const char *s)
+static int32_t atoi32(const char *s)
 {
   int sign = 1;
   int32_t val = 0;
@@ -204,7 +205,7 @@ int32_t atoi32(const char *s)
   return val;
 }
 
-void itoa32(int32_t val, char *s)
+static void itoa32(int32_t val, char *s)
 {
   if (val == 0)
   {
@@ -243,7 +244,7 @@ void itoa32(int32_t val, char *s)
   *(s++) = 0;
 }
 
-void print_ok(void)
+static void print_ok(void)
 {
   outbuf[0] = 'o';
   outbuf[1] = 'k';
@@ -262,7 +263,7 @@ void print_ok(void)
 }
 
 #if DEBUG
-void print_debug(const char *str)
+static void print_debug(const char *str)
 {
   int len = strlen(str);
   outbuf[0] = ':';
@@ -285,7 +286,7 @@ void print_debug(const char *str)
 }
 #endif
 
-void print_pos(uint32_t ha, int32_t dec)
+static void print_pos(uint32_t ha, int32_t dec)
 {
   uint8_t i = 0;
   uint32_t ha_s = ha  * HA_2_STEPS_B / HA_2_STEPS_A;    // HA_TOTAL_SECONDS / HA_STEPS;
@@ -333,7 +334,7 @@ void print_pos(uint32_t ha, int32_t dec)
   UDR = outbuf[0];
 }
 
-void send_nl(void)
+static void send_nl(void)
 {
   if (!transmit)
   {
@@ -358,7 +359,7 @@ ISR(USART_TX_vect)
   }
 }
 
-void dir_ha(bool pos)
+static void dir_ha(bool pos)
 {
   ha_pos_dir = pos;
   if (pos)
@@ -371,7 +372,7 @@ void dir_ha(bool pos)
   }
 }
 
-void dir_dec(bool pos)
+static void dir_dec(bool pos)
 {
   dec_pos_dir = pos;
   if (pos)
@@ -384,7 +385,7 @@ void dir_dec(bool pos)
   }
 }
 
-void step_ha(void)
+static void step_ha(void)
 {
   if (ha_pos_dir)
   {
@@ -404,7 +405,7 @@ void step_ha(void)
   SDPORT |= (1<<HASTEP);
 }
 
-void step_dec(void)
+static void step_dec(void)
 {
   if (dec_pos_dir)
   {
@@ -418,12 +419,22 @@ void step_dec(void)
   SDPORT |= (1<<DECSTEP);
 }
 
-void clear_steps(void)
+static void clear_step_ha(void)
+{
+  SDPORT &= ~(1 << HASTEP);
+}
+
+static void clear_step_dec(void)
+{
+  SDPORT &= ~(1 << DECSTEP);
+}
+
+static void clear_steps(void)
 {
   SDPORT &= ~(1 << HASTEP | 1 << DECSTEP);
 }
 
-void set_secs_per_hour(int32_t ha_secs_per_hour);
+void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour);
 
 void make_step_goto(void)
 {
@@ -459,65 +470,68 @@ void make_step_goto(void)
   if (x == delta_x)
   {
     isgoto = false;
-    set_secs_per_hour(ha_speed);
+    set_secs_per_hour(ha_speed, dec_speed);
   }
-}
-
-static void tick_movement(void)
-{
-  step_ha();
 }
 
 ISR(TIMER1_COMPA_vect)
 {
-  blink();
   if (isgoto)
   { 
     make_step_goto();
   }
   else
   {
-    tick_movement();
+    step_ha();
   }
 }
 
 ISR(TIMER1_COMPB_vect)
 {
-  clear_steps();
+  if (isgoto)
+    clear_steps();
+  else
+    clear_step_ha();
+}
+
+ISR(TIMER0_COMPA_vect)
+{
+  counter_dec++;
+  if (counter_dec == delay_dec)
+  {
+    counter_dec = 0;
+    step_dec();
+  }
+}
+
+ISR(TIMER0_COMPB_vect)
+{
+  clear_step_dec();
 }
 
 // secs_per_hour in fixed point format
-void set_secs_per_hour(int32_t ha_secs_per_hour)
+void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
 {
-  #define TIMER_PRESCALER_HA 1024
-  #define PSC2_HA 1
-  #define PSC1_HA 0
-  #define PSC0_HA 1
-
   cli();
+
+  TIMSK0 = 0;
+  TIMSK1 = 0;
   
   ha_speed = ha_secs_per_hour;
-  //dec_speed = dec_secs_per_hour;
+  dec_speed = dec_secs_per_hour;
   
   SDPORT &= ~(1<<ENABLE);
   isgoto = false;
   
-  if (ha_secs_per_hour == 0)
-  {
-     TCCR1B = (0 << CS12) | (0 << CS11) | (0 << CS10) | (1 << WGM12) | (0 << WGM13); // disabled, CTC
-     sei();
-     return;
-  }
-
   dir_ha(ha_secs_per_hour >= 0);
-  //dir_dec(dec_secs_per_hour >= 0);
+  dir_dec(dec_secs_per_hour >= 0);
   
   ha_secs_per_hour = abs(ha_secs_per_hour);
-  //dec_secs_per_hour = abs(dec_secs_per_hour);
+  dec_secs_per_hour = abs(dec_secs_per_hour);
 
   /*  
-   * timer tick frequency = F_CPU / TIMER_PRESCALER
-   * timer tick delta t = TIMER_PRESCALER / F_CPU
+   * timer tick frequency = F_CPU / TIMER_PRESCALER_HA
+   * timer tick delta t = HA_TIMER_PRESCALER / F_CPU
    * 
    * H.A. seconds per hour = secs_per_hour / SUBSECONDS
    * H.A. seconds per second = secs_per_hour / SUBSECONDS / 3600
@@ -528,50 +542,103 @@ void set_secs_per_hour(int32_t ha_secs_per_hour)
    * 
    * step delta t = 1 / "H.A. steps per second"
    * counter = "step delta t" / "timer tick delta t" =
-   *         = 1 / "H.A. steps per second" / (TIMER_PRESCALER / F_CPU) = 
-   *         = SUBSECONDS * 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER / secs_per_hour / HA_2_STEPS_A
+   *         = 1 / "H.A. steps per second" / (TIMER_PRESCALER_HA / F_CPU) = 
+   *         = SUBSECONDS * 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER_HA / secs_per_hour / HA_2_STEPS_A
    *
    *
-   * secs_per_hour / SUBSECONDS = 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER / counter / HA_2_STEPS_A. 
+   * secs_per_hour / SUBSECONDS = 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER_HA / counter / HA_2_STEPS_A. 
    * 32 <= counter <= 65535
    * 724 <= secs_per_hour / SUBSECONDS <= 1483154
    *
    */
-
-  const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_HA / HA_2_STEPS_A;
-//  const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_DEC / DEC_2_STEPS_A;
-
   if (ha_secs_per_hour != 0)
-    delay_ha = HA_A / ha_secs_per_hour;
-  else
-    delay_ha = 0;
-
-#if DEBUG
   {
-    sei();
-    char buf[100] = {0};
-    snprintf(buf, 100, "delay %ld %ld", (long)delay_ha, (long)delay_dec);
-    print_debug(buf);
-    cli();
+    #define TIMER_PRESCALER_HA 1024
+    #define PSC2_HA 1
+    #define PSC1_HA 0
+    #define PSC0_HA 1
+
+    const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_HA / HA_2_STEPS_A;
+    delay_ha = HA_A / ha_secs_per_hour;
+    
+    if (delay_ha >= 65536)
+      delay_ha = 65535;
+    else if (delay_ha > 0 && delay_ha < 32)
+      delay_ha = 32;
+    
+    TCCR1A = (0 << WGM11) | (0 << WGM10);
+    TCCR1C = 0;
+    OCR1A = delay_ha;
+    OCR1B = 2;
+    TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
+    TCCR1B = (PSC2_HA << CS12) | (PSC1_HA << CS11) | (PSC0_HA << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
+    TCNT1 = 0;
+
+    #undef TIMER_PRESCALER_HA
+    #undef PSC2_HA
+    #undef PSC1_HA
+    #undef PSC0_HA
   }
-#endif
+  else
+  {
+    delay_ha = 0;
+    TCCR1B = 0;
+  }
 
-  counter_ha = 0;
-  counter_dec = 0;
+  /*  
+   * timer tick frequency = F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC
+   * timer tick delta t = TIMER_PRESCALER_DEC * TIMER_DELAY_DEC / F_CPU
+   * 
+   * Dec. seconds per hour = dec_secs_per_hour / SUBSECONDS
+   * Dec. seconds per second = dec_secs_per_hour / SUBSECONDS / 3600
+   * 
+   * H.A. steps per second  = "Dec. seconds per second" * DEC_STEPS / DEC_SECONDS = 
+   *                        = "Dec. seconds per second" * DEC_2_STEPS_A / DEC_2_STEPS_B =
+   *                        = dec_secs_per_hour * DEC_2_STEPS_A / SUBSECONDS / 3600 / DEC_2_STEPS_B
+   * 
+   * step delta t = 1 / "Dec. steps per second"
+   * counter = "step delta t" / "timer tick delta t" =
+   *         = 1 / "Dec. steps per second" / (TIMER_PRESCALER_DEC * TIMER_DELAY_DEC / F_CPU) = 
+   *         = SUBSECONDS * 3600 * DEC_2_STEPS_B  * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / secs_per_hour_dec / DEC_2_STEPS_A
+   *
+   *
+   * secs_per_hour / SUBSECONDS = 3600 * DEC_2_STEPS_B  * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / counter / DEC_2_STEPS_A.
+   * 4 <= delay_dec
+   * secs_per_hour / SUBSECONDS <= 2780914
+   *
+   */
+  if (dec_secs_per_hour != 0)
+  {
+    #define TIMER_DELAY_DEC 64
+    #define TIMER_PRESCALER_DEC 1024
+    #define PSC2_DEC 1
+    #define PSC1_DEC 0
+    #define PSC0_DEC 1
 
-  TCCR1A = (0 << WGM11) | (0 << WGM10);
-  TCCR1C = 0;
-  OCR1A = delay_ha;
-  OCR1B = 2;
-  TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
-  TCCR1B = (PSC2_HA << CS12) | (PSC1_HA << CS11) | (PSC0_HA << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
-  TCNT1 = 0;
-  
-  #undef TIMER_PRESCALER_HA
-  #undef PSC2_HA
-  #undef PSC1_HA
-  #undef PSC0_HA
+    const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / DEC_2_STEPS_A;
+    delay_dec = DEC_A / dec_secs_per_hour;
 
+    if (delay_dec < 4)
+      delay_dec = 4;
+    
+    TCCR0A = (1 << WGM01) | (0 << WGM00);
+    OCR0A = TIMER_DELAY_DEC;
+    OCR0B = 2;
+    TIMSK0 |= (1 << OCIE0A) | (1 << OCIE0B);
+    TCCR0B = (PSC2_DEC << CS02) | (PSC1_DEC << CS01) | (PSC0_DEC << CS00) | (0 << WGM02); // pre-scaler 1024, CTC
+    TCNT0 = 0;
+    counter_dec = 0;
+
+    #undef TIMER_PRESCALER_DEC
+    #undef PSC2_DEC
+    #undef PSC1_DEC
+    #undef PSC0_DEC
+  }
+  else
+  {
+    delay_dec = 0;
+    TCCR0B = 0;
+  }
   sei();
 }
 
@@ -583,6 +650,9 @@ void set_target_position(uint32_t tha, int32_t tdec)
   #define PSC0 1
 
   cli();
+
+  TIMSK0 = 0;
+  TIMSK1 = 0;
 
   delay_ha = 0;
   delay_dec = 0;
@@ -643,12 +713,13 @@ void set_target_position(uint32_t tha, int32_t tdec)
     counter = 65535U;
 
   isgoto = true;
-  
+  TCCR0B = 0;
+
   TCCR1A = (0 << WGM11) | (0 << WGM10);
   TCCR1C = 0;
   OCR1A = counter;
   OCR1B = 2;
-  TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
+  TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
   TCCR1B = (PSC2 << CS12) | (PSC1 << CS11) | (PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 64, CTC
   TCNT1 = 0;
   sei();
@@ -711,7 +782,7 @@ void handle_command(void)
   {
     case 'D': // Disable steppers
     {
-      set_secs_per_hour(0);
+      set_secs_per_hour(0, 0);
       PORTD |= 1<<ENABLE;
       print_ok();
       return;
@@ -729,9 +800,9 @@ void handle_command(void)
     }
     case 'H': // H.A. and Dec. axis movement with speed. Speed in fixed point format
     {
-      int32_t ha_secs_per_hour;
-      read_int(&ha_secs_per_hour);
-      set_secs_per_hour(ha_secs_per_hour);
+      int32_t ha_secs_per_hour, dec_secs_per_hour;
+      read_2_int(&ha_secs_per_hour, &dec_secs_per_hour);
+      set_secs_per_hour(ha_secs_per_hour, dec_secs_per_hour);
       print_ok();
       return;
     }
@@ -789,6 +860,7 @@ int main(void)
   UBRRL = UBRR_VALUE & 0xFF;
   
   DDRD = 1 << ENABLE | 1 << DECSTEP | 1 << DECDIR | 1 << HASTEP | 1 << HADIR;
+  DDRB = 1 << 5;
   
   memset(inbuf, 0, sizeof(inbuf));
   memset(outbuf, 0, sizeof(outbuf));
