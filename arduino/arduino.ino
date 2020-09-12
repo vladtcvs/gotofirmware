@@ -1,11 +1,14 @@
 
 #ifndef DEBUG
-#define DEBUG 0
+#define DEBUG 1
 #endif
 
 #ifndef F_CPU
 #define F_CPU 16000000UL
 #endif
+
+#define XSTR(x) STR(x)
+#define STR(x) #x
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -23,8 +26,8 @@
 /* I/O options */
 #if DEBUG
 
-#define INBUFLEN 100
-#define OUTBUFLEN 100
+#define INBUFLEN 200
+#define OUTBUFLEN 200
 
 #else
 
@@ -38,8 +41,9 @@
 #define UBRR_VALUE F_CPU / 16 / BAUD - 1
 
 /* Mount options */
+#define DEC_TOTAL_SECONDS            ((int32_t)(360.0*60*60))
 #define DEC_STEPPER_ANGLE            1.8
-#define DEC_STEPPER_MICROSTEP        16
+#define DEC_STEPPER_MICROSTEP        2
 #define DEC_STEPPER_STEPS            (360.0 * DEC_STEPPER_MICROSTEP / DEC_STEPPER_ANGLE)
 #define DEC_GEAR_SMALL               20
 #define DEC_GEAR_BIG                 40
@@ -47,8 +51,13 @@
 #define DEC_REDUCTION_NUMBER         (DEC_MOUNT_REDUCTION_NUMBER * DEC_GEAR_BIG / DEC_GEAR_SMALL)
 #define DEC_STEPS                    ((int32_t)(DEC_STEPPER_STEPS * DEC_REDUCTION_NUMBER))
 
+// DEC_2_STEPS_A / DEC_2_STEPS_B = DEC_STEPS / DEC_TOTAL_SECONDS
+#define DEC_2_STEPS_A                4
+#define DEC_2_STEPS_B                45
+
+#define HA_TOTAL_SECONDS            ((uint32_t)(24.0*60*60))
 #define HA_STEPPER_ANGLE            1.8
-#define HA_STEPPER_MICROSTEP        16
+#define HA_STEPPER_MICROSTEP        2
 #define HA_STEPPER_STEPS            (360.0 * HA_STEPPER_MICROSTEP / HA_STEPPER_ANGLE)
 #define HA_GEAR_SMALL               20
 #define HA_GEAR_BIG                 40
@@ -56,11 +65,19 @@
 #define HA_REDUCTION_NUMBER         (HA_MOUNT_REDUCTION_NUMBER * HA_GEAR_BIG / HA_GEAR_SMALL)
 #define HA_STEPS                    ((uint32_t)(HA_STEPPER_STEPS * HA_REDUCTION_NUMBER))
 
-#define DEC_TOTAL_SECONDS           ((int32_t)(360.0*60*60))
-#define HA_TOTAL_SECONDS            ((uint32_t)(24.0*60*60))
+// HA_2_STEPS_A / HA_2_STEPS_B = HA_STEPS / HA_TOTAL_SECONDS
+#define HA_2_STEPS_A                4
+#define HA_2_STEPS_B                3
 
-#define FULL_ROTATION_TIME_MIN      3
-#define GOTO_SPEED_SECS_PER_HOUR    (3600UL * 24 * 60 / (FULL_ROTATION_TIME_MIN))
+
+#pragma message "DEC STEPS: " XSTR(DEC_STEPS) " MICROSTEP: " XSTR(DEC_STEPPER_MICROSTEP)
+#pragma message "HA STEPS: " XSTR(HA_STEPS) " MICROSTEP: " XSTR(HA_STEPPER_MICROSTEP)
+
+#define SUBSECONDS                  2
+
+#define FULL_ROTATION_TIME_SECONDS  180
+#define GOTO_HA_STEPS_PER_SECOND    (HA_STEPS / FULL_ROTATION_TIME_SECONDS)
+#define GOTO_DEC_STEPS_PER_SECOND   (DEC_STEPS / FULL_ROTATION_TIME_SECONDS)
 
 /* Step/dir */
 
@@ -131,14 +148,20 @@ volatile bool inbuf_rdy;
 
 char outbuf[OUTBUFLEN];
 uint8_t outpos;
-volatile bool outbuf_rdy;
 
-bool transmit = false;
+volatile bool outbuf_rdy;
+volatile bool transmit = false;
 
 // HA mode vars
 
-uint16_t ha_delay_counter;  // Delay between steps for H.A.
+uint32_t delay_ha;          // Delay between steps for H.A.
+uint32_t counter_ha;
+
+uint32_t delay_dec;         // Delay between steps for Dec.
+uint32_t counter_dec;
+
 int32_t  ha_speed;          // H.A. speed in H mode
+//int32_t  dec_speed;         // Dec. speed in H mode
 
 // GOTO mode vars
 
@@ -153,7 +176,7 @@ bool ha_is_x;
 volatile bool isgoto;     // system in goto mode
 
 uint32_t ha;              // in steps
-int32_t dec;              // in steps
+int32_t  dec;              // in steps
 
 bool ha_pos_dir;          // H.A. step direction
 bool dec_pos_dir;         // Dec. step direction
@@ -220,14 +243,34 @@ void itoa32(int32_t val, char *s)
   *(s++) = 0;
 }
 
+void print_ok(void)
+{
+  outbuf[0] = 'o';
+  outbuf[1] = 'k';
+  outbuf[2] = '\r';
+  outbuf[3] = '\n';
+  outbuf[4] = 0;
+
+  while (!(UCSRA & (1 << UDRE)))
+    ;
+
+  outpos = 1;
+  UCSRB &= ~(1 << RXCIE);
+  transmit = true;
+  outbuf_rdy = false;
+  UDR = outbuf[0];
+}
+
 #if DEBUG
 void print_debug(const char *str)
 {
-  memset(outbuf, 0, OUTBUFLEN);
-  strcpy(outbuf, str);
-  int len = strlen(outbuf);
+  int len = strlen(str);
+  outbuf[0] = ':';
+  memcpy(outbuf+1, str, len);
+  len++;
   outbuf[len++] = '\r';
   outbuf[len++] = '\n';
+  outbuf[len++] = 0;
   outpos = 1;
 
   while (!(UCSRA & (1 << UDRE)))
@@ -245,8 +288,8 @@ void print_debug(const char *str)
 void print_pos(uint32_t ha, int32_t dec)
 {
   uint8_t i = 0;
-  uint32_t ha_s = ha  * 3 / 32;   // HA_TOTAL_SECONDS / HA_STEPS;
-  int32_t dec_s = dec * 45 / 32;  // DEC_TOTAL_SECONDS / DEC_STEPS;
+  uint32_t ha_s = ha  * HA_2_STEPS_B / HA_2_STEPS_A;    // HA_TOTAL_SECONDS / HA_STEPS;
+  int32_t dec_s = dec * DEC_2_STEPS_B / DEC_2_STEPS_A;  // DEC_TOTAL_SECONDS / DEC_STEPS;
 
 #if DEBUG
   {
@@ -380,51 +423,61 @@ void clear_steps(void)
   SDPORT &= ~(1 << HASTEP | 1 << DECSTEP);
 }
 
-void set_ha_secs_per_hour(int32_t secs_per_hour);
+void set_secs_per_hour(int32_t ha_secs_per_hour);
+
+void make_step_goto(void)
+{
+  bool make_y_step = false;
+  error += delta_error;
+    
+  if (error >= delta_x + 1)
+  {
+    error -= (delta_x + 1);
+    make_y_step = true;
+  }
+    
+  if (ha_is_x)
+  {
+    // Make H.A. step
+    step_ha();
+
+    // Make Dec. step, if need
+    if (make_y_step)
+      step_dec();
+  }
+  else
+  {
+    // Make Dec. step
+    step_dec();
+
+    // Make H.A. step, if need
+    if (make_y_step)
+      step_ha();
+  }
+
+  x++;
+  if (x == delta_x)
+  {
+    isgoto = false;
+    set_secs_per_hour(ha_speed);
+  }
+}
+
+static void tick_movement(void)
+{
+  step_ha();
+}
 
 ISR(TIMER1_COMPA_vect)
 {
   blink();
   if (isgoto)
   { 
-    bool make_y_step = false;
-    error += delta_error;
-    
-    if (error >= delta_x + 1)
-    {
-      error -= (delta_x + 1);
-      make_y_step = true;
-    }
-    
-    if (ha_is_x)
-    {
-      // Make H.A. step
-      step_ha();
-
-      // Make Dec. step, if need
-      if (make_y_step)
-        step_dec();
-    }
-    else
-    {
-      // Make Dec. step
-      step_dec();
-
-      // Make H.A. step, if need
-      if (make_y_step)
-        step_ha();
-    }
-
-    x++;
-    if (x == delta_x)
-    {
-      isgoto = false;
-      set_ha_secs_per_hour(ha_speed);
-    }
+    make_step_goto();
   }
   else
   {
-    step_ha();
+    tick_movement();
   }
 }
 
@@ -433,73 +486,110 @@ ISR(TIMER1_COMPB_vect)
   clear_steps();
 }
 
-void set_ha_secs_per_hour(int32_t secs_per_hour)
+// secs_per_hour in fixed point format
+void set_secs_per_hour(int32_t ha_secs_per_hour)
 {
-  ha_speed = secs_per_hour;
+  #define TIMER_PRESCALER 1024
+  #define PSC2 1
+  #define PSC1 0
+  #define PSC0 1
+
+  cli();
+  
+  ha_speed = ha_secs_per_hour;
+  //dec_speed = dec_secs_per_hour;
+  
   SDPORT &= ~(1<<ENABLE);
   isgoto = false;
   
-  if (secs_per_hour == 0)
+  if (ha_secs_per_hour == 0)
   {
      TCCR1B = (0 << CS12) | (0 << CS11) | (0 << CS10) | (1 << WGM12) | (0 << WGM13); // disabled, CTC
+     sei();
      return;
   }
 
-  dir_ha(secs_per_hour >= 0);
-  secs_per_hour = abs(secs_per_hour);
+  dir_ha(ha_secs_per_hour >= 0);
+  //dir_dec(dec_secs_per_hour >= 0);
   
-  uint32_t counter = (uint32_t)((uint64_t)3600 * 3 * F_CPU / 1024 / 32) / secs_per_hour;
+  ha_secs_per_hour = abs(ha_secs_per_hour);
+  //dec_secs_per_hour = abs(dec_secs_per_hour);
+
+  /*  
+   * timer tick frequency = F_CPU / TIMER_PRESCALER
+   * timer tick delta t = TIMER_PRESCALER / F_CPU
+   * 
+   * H.A. seconds per hour = secs_per_hour / SUBSECONDS
+   * H.A. seconds per second = secs_per_hour / SUBSECONDS / 3600
+   * 
+   * H.A. steps per second  = "H.A. seconds per second" * HA_STEPS / HA_SECONDS = 
+   *                        = "H.A. seconds per second" * HA_2_STEPS_A / HA_2_STEPS_B =
+   *                        = secs_per_hour * HA_2_STEPS_A / SUBSECONDS / 3600 / HA_2_STEPS_B
+   * 
+   * step delta t = 1 / "H.A. steps per second"
+   * counter = "step delta t" / "timer tick delta t" =
+   *         = 1 / "H.A. steps per second" / (TIMER_PRESCALER / F_CPU) = 
+   *         = SUBSECONDS * 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER / secs_per_hour / HA_2_STEPS_A
+   */
+
+  const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER / HA_2_STEPS_A;
+  const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER / DEC_2_STEPS_A;
+
+  if (ha_secs_per_hour != 0)
+    delay_ha = HA_A / ha_secs_per_hour;
+  else
+    delay_ha = 0;
 
 #if DEBUG
   {
-    char buf[100];
-    snprintf(buf, 100, "counter %ld %i", (unsigned long)counter, (int)ha_pos_dir);
+    sei();
+    char buf[100] = {0};
+    snprintf(buf, 100, "delay %ld %ld", (long)delay_ha, (long)delay_dec);
     print_debug(buf);
+    cli();
   }
 #endif
 
-  if (counter >= 65536UL)
-    ha_delay_counter = 65535U;
-  else
-    ha_delay_counter = counter;
+  counter_ha = 0;
+  counter_dec = 0;
 
-  cli();
   TCCR1A = (0 << WGM11) | (0 << WGM10);
   TCCR1C = 0;
-  OCR1A = ha_delay_counter;
+  OCR1A = delay_ha;
   OCR1B = 2;
   TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
-  TCCR1B = (1 << CS12) | (0 << CS11) | (1 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
+  TCCR1B = (PSC2 << CS12) | (PSC1 << CS11) | (PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
   TCNT1 = 0;
+  
+  #undef TIMER_PRESCALER
+  #undef PSC2
+  #undef PSC1
+  #undef PSC0
+
   sei();
 }
 
 void set_target_position(uint32_t tha, int32_t tdec)
 {
+  #define TIMER_PRESCALER 64
+  #define PSC2 0
+  #define PSC1 1
+  #define PSC0 1
+
+  cli();
+
+  delay_ha = 0;
+  delay_dec = 0;
+  counter_ha = 0;
+  counter_dec = 0;
+ 
   int32_t dha = (int32_t)tha - ha;
   int32_t ddec = tdec - dec;
-
-#if DEBUG
-  {
-    char buf[100];
-    snprintf(buf, 100, "dha = %ld", (unsigned long)dha);
-    print_debug(buf);
-  }
-#endif
 
   if (dha > (int32_t)HA_STEPS / 2)
     dha -= (int32_t)HA_STEPS;
   else if (-dha > (int32_t)HA_STEPS / 2)
     dha += (int32_t)HA_STEPS;
-
-#if DEBUG
-  {
-    char buf[100];
-    snprintf(buf, 100, "dha fixed = %ld", (unsigned long)dha);
-    print_debug(buf);
-  }
-#endif
-
 
   SDPORT &= ~(1<<ENABLE);
 
@@ -509,12 +599,15 @@ void set_target_position(uint32_t tha, int32_t tdec)
   dir_dec(ddec >= 0);
   ddec = (ddec >= 0 ? ddec : -ddec);
 
+  uint32_t counter;
+  
   if (dha > ddec)
   {
     // use H.A. as main axis
     delta_x = dha;
     delta_y = ddec;
     ha_is_x = true;
+    counter = (uint32_t)(F_CPU / TIMER_PRESCALER / GOTO_HA_STEPS_PER_SECOND);
   }
   else
   {
@@ -522,7 +615,42 @@ void set_target_position(uint32_t tha, int32_t tdec)
     delta_x = ddec;
     delta_y = dha;
     ha_is_x = false;
+    counter = (uint32_t)(F_CPU / TIMER_PRESCALER / GOTO_DEC_STEPS_PER_SECOND);
   }
+
+  if (delta_x == 0)
+  {
+    sei();
+    return;
+  }
+  x = 0;
+  error = 0;
+  delta_error = delta_y + 1;
+
+  /*
+   * step delta t = 1 / GOTO_HA_STEPS_PER_SECOND
+   * timer tick delta t = TIMER_PRESCALER / F_CPU
+   * counter = "step delta t" / "timer tick delta t"
+   */
+  
+  if (counter >= 65536UL)
+    counter = 65535U;
+
+  isgoto = true;
+  
+  TCCR1A = (0 << WGM11) | (0 << WGM10);
+  TCCR1C = 0;
+  OCR1A = counter;
+  OCR1B = 2;
+  TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
+  TCCR1B = (PSC2 << CS12) | (PSC1 << CS11) | (PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 64, CTC
+  TCNT1 = 0;
+  sei();
+  
+  #undef TIMER_PRESCALER
+  #undef PSC2
+  #undef PSC1
+  #undef PSC0
 
 #if DEBUG
   {
@@ -531,28 +659,6 @@ void set_target_position(uint32_t tha, int32_t tdec)
     print_debug(buf);
   }
 #endif
-
-  if (delta_x == 0)
-  {
-    return;
-  }
-  x = 0;
-  error = 0;
-  delta_error = delta_y + 1;
-  
-  uint16_t counter = (uint16_t)(((uint64_t)3600 * 3 * F_CPU / 64 / 32) / GOTO_SPEED_SECS_PER_HOUR);
-
-  isgoto = true;
-  
-  cli();
-  TCCR1A = (0 << WGM11) | (0 << WGM10);
-  TCCR1C = 0;
-  OCR1A = counter;
-  OCR1B = 2;
-  TIMSK = (1 << OCIE1A) | (1 << OCIE1B);
-  TCCR1B = (0 << CS12) | (1 << CS11) | (1 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 64, CTC
-  TCNT1 = 0;
-  sei();
 }
 
 void read_int(int32_t *v)
@@ -569,7 +675,7 @@ void read_int(int32_t *v)
   *v = atoi32(inbuf + i);
 }
 
-bool read_pos(uint32_t *ha, int32_t *dec)
+bool read_2_int(int32_t *ha, int32_t *dec)
 {
   int i = 0;
   while (i < INBUFLEN && inbuf[i] != ' ')
@@ -599,38 +705,41 @@ void handle_command(void)
   {
     case 'D': // Disable steppers
     {
-      set_ha_secs_per_hour(0);
+      set_secs_per_hour(0);
       PORTD |= 1<<ENABLE;
+      print_ok();
       return;
     }
     case 'S': // Set current position, H.A. Dec
     {
       uint32_t ha_s;
       int32_t dec_s;
-      read_pos(&ha_s, &dec_s);
+      read_2_int(&ha_s, &dec_s);
       
-      ha = (ha_s * 32 / 3) % HA_STEPS;  // (((uint64_t)ha_s * HA_STEPS) / HA_TOTAL_SECONDS) % HA_STEPS;
-      dec =  dec_s * 32 / 45;           // ((int64_t)dec_s * DEC_STEPS) / DEC_TOTAL_SECONDS;
-      
+      ha  = (ha_s * HA_2_STEPS_A / HA_2_STEPS_B) % HA_STEPS;  // (((uint64_t)ha_s * HA_STEPS) / HA_TOTAL_SECONDS) % HA_STEPS;
+      dec =  dec_s * DEC_2_STEPS_A / DEC_2_STEPS_B;           // ((int64_t)dec_s * DEC_STEPS) / DEC_TOTAL_SECONDS;
+      print_ok();
       return;
     }
-    case 'H': // H.A. axis movement with speed
+    case 'H': // H.A. and Dec. axis movement with speed. Speed in fixed point format
     {
-      int32_t secs_per_hour;
-      read_int(&secs_per_hour);
-      set_ha_secs_per_hour(secs_per_hour);
+      int32_t ha_secs_per_hour;
+      read_int(&ha_secs_per_hour);
+      set_secs_per_hour(ha_secs_per_hour);
+      print_ok();
       return;
     }
     case 'G': // Goto "H.A. Dec"
     {
       uint32_t ha_s, tha;
       int32_t dec_s, tdec;
-      read_pos(&ha_s, &dec_s);
+      read_2_int(&ha_s, &dec_s);
 
-      tha = (ha_s * 32 / 3) % HA_STEPS;  // (((uint64_t)ha_s * HA_STEPS) / HA_TOTAL_SECONDS) % HA_STEPS;
-      tdec =  dec_s * 32 / 45;           // ((int64_t)dec_s * DEC_STEPS) / DEC_TOTAL_SECONDS;
+      tha = (ha_s * HA_2_STEPS_A / HA_2_STEPS_B) % HA_STEPS;  // (((uint64_t)ha_s * HA_STEPS) / HA_TOTAL_SECONDS) % HA_STEPS;
+      tdec =  dec_s * DEC_2_STEPS_A / DEC_2_STEPS_B;           // ((int64_t)dec_s * DEC_STEPS) / DEC_TOTAL_SECONDS;
       
       set_target_position(tha, tdec);
+      print_ok();
       return;
     }
     case 'P': // Print position
