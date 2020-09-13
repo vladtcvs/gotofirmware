@@ -1,4 +1,14 @@
 
+#ifdef ARDUINO
+
+#define MEGA328P 1
+
+#else
+
+#define TINY4313 1
+
+#endif
+
 #ifndef DEBUG
 #define DEBUG 1
 #endif
@@ -90,7 +100,8 @@
 #define ENABLE                      2
 
 /* For arduino prototype */
-#ifdef ARDUINO
+#if MEGA328P
+
 #define UDR UDR0
 #define UCSRA UCSR0A
 #define UCSRB UCSR0B
@@ -107,11 +118,13 @@
 
 #define UDRE UDRE0
 
-#else
+#elif TINY4313
 
 #define TIMSK1 TIMSK
 #define TIMSK0 TIMSK
 
+#else
+#error "Unsupported platform!"
 #endif
 
 /*
