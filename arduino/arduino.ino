@@ -85,7 +85,6 @@
 
 #define SUBSECONDS                  2
 
-#define FULL_ROTATION_TIME_SECONDS  180
 #define GOTO_HA_STEPS_PER_SECOND    (HA_STEPS / FULL_ROTATION_TIME_SECONDS)
 #define GOTO_DEC_STEPS_PER_SECOND   (DEC_STEPS / FULL_ROTATION_TIME_SECONDS)
 
@@ -98,13 +97,13 @@
 #define DECDIR                      6
 #define DECSTEP                     5
 
-#define ENABLE_DEC_DDR              DDRD
-#define ENABLE_DEC_PORT             PORTD
-#define ENABLE_DEC_PIN              2
+#define ENABLE_HA_DDR              DDRD
+#define ENABLE_HA_PORT             PORTD
+#define ENABLE_HA_PIN              2
 
-#define ENABLE_HA_DDR               DDRB
-#define ENABLE_HA_PORT              PORTB
-#define ENABLE_HA_PIN               0
+#define ENABLE_DEC_DDR               DDRB
+#define ENABLE_DEC_PORT              PORTB
+#define ENABLE_DEC_PIN               0
 
 /* For arduino prototype */
 #if MEGA328P
@@ -133,6 +132,7 @@
 #else
 #error "Unsupported platform!"
 #endif
+
 
 /*
  * Commands
@@ -191,6 +191,8 @@ uint32_t delta_y;
 uint32_t error, delta_error;
 
 bool ha_is_x;
+
+static int32_t FULL_ROTATION_TIME_SECONDS = 180;
 
 // COMMON vars
 
@@ -850,6 +852,12 @@ void handle_command(void)
       print_pos(ha, dec);
       return;
     }
+    case 'R': // Set rotation time
+    {
+      read_int(&FULL_ROTATION_TIME_SECONDS);
+      print_ok();
+      return;
+    }
     default:  // Error
       return;
   }
@@ -888,8 +896,8 @@ int main(void)
   DDRD = 1 << DECSTEP | 1 << DECDIR | 1 << HASTEP | 1 << HADIR;
   DDRB = 1 << 5;
   
-  ENABLE_HA_DDR  |= 1 << ENABLE_HA_PIN
-  ENABLE_DEC_DDR |= 1 << ENABLE_DEC_PIN
+  ENABLE_HA_DDR  |= 1 << ENABLE_HA_PIN;
+  ENABLE_DEC_DDR |= 1 << ENABLE_DEC_PIN;
 
   memset(inbuf, 0, sizeof(inbuf));
   memset(outbuf, 0, sizeof(outbuf));
