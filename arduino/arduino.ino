@@ -97,7 +97,14 @@
 #define HASTEP                      3
 #define DECDIR                      6
 #define DECSTEP                     5
-#define ENABLE                      2
+
+#define ENABLE_DEC_DDR              DDRD
+#define ENABLE_DEC_PORT             PORTD
+#define ENABLE_DEC_PIN              2
+
+#define ENABLE_HA_DDR               DDRB
+#define ENABLE_HA_PORT              PORTB
+#define ENABLE_HA_PIN               0
 
 /* For arduino prototype */
 #if MEGA328P
@@ -533,7 +540,6 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
   ha_speed = ha_secs_per_hour;
   dec_speed = dec_secs_per_hour;
   
-  SDPORT &= ~(1<<ENABLE);
   isgoto = false;
   
   dir_ha(ha_secs_per_hour >= 0);
@@ -571,6 +577,8 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
     #define PSC1_HA 0
     #define PSC0_HA 1
 
+    ENABLE_HA_PORT  &= ~(1<<ENABLE_HA_PIN);
+
     const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_HA / HA_2_STEPS_A;
     delay_ha = HA_A / ha_secs_per_hour;
     
@@ -594,6 +602,7 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
   }
   else
   {
+    ENABLE_HA_PORT |=  (1<<ENABLE_HA_PIN);
     delay_ha = 0;
     TCCR1B = 0;
   }
@@ -622,6 +631,7 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
    */
   if (dec_secs_per_hour != 0)
   {
+    ENABLE_DEC_PORT &=  ~(1<<ENABLE_DEC_PIN);
     #define TIMER_DELAY_DEC 64
     #define TIMER_PRESCALER_DEC 1024
     #define PSC2_DEC 1
@@ -649,6 +659,7 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
   }
   else
   {
+    ENABLE_DEC_PORT |=  (1<<ENABLE_DEC_PIN);
     delay_dec = 0;
     TCCR0B = 0;
   }
@@ -680,7 +691,8 @@ void set_target_position(uint32_t tha, int32_t tdec)
   else if (-dha > (int32_t)HA_STEPS / 2)
     dha += (int32_t)HA_STEPS;
 
-  SDPORT &= ~(1<<ENABLE);
+  ENABLE_HA_PORT  &=  ~(1<<ENABLE_HA_PIN);
+  ENABLE_DEC_PORT &=  ~(1<<ENABLE_DEC_PIN);
 
   dir_ha(dha >= 0);
   dha = (dha >= 0 ? dha : -dha);
@@ -796,7 +808,8 @@ void handle_command(void)
     case 'D': // Disable steppers
     {
       set_secs_per_hour(0, 0);
-      PORTD |= 1<<ENABLE;
+      ENABLE_HA_PORT |= 1<<ENABLE_HA_PIN;
+      ENABLE_DEC_PORT |= 1<<ENABLE_DEC_PIN;
       print_ok();
       return;
     }
@@ -872,13 +885,19 @@ int main(void)
   UBRRH = UBRR_VALUE >> 8;
   UBRRL = UBRR_VALUE & 0xFF;
   
-  DDRD = 1 << ENABLE | 1 << DECSTEP | 1 << DECDIR | 1 << HASTEP | 1 << HADIR;
+  DDRD = 1 << DECSTEP | 1 << DECDIR | 1 << HASTEP | 1 << HADIR;
   DDRB = 1 << 5;
   
+  ENABLE_HA_DDR  |= 1 << ENABLE_HA_PIN
+  ENABLE_DEC_DDR |= 1 << ENABLE_DEC_PIN
+
   memset(inbuf, 0, sizeof(inbuf));
   memset(outbuf, 0, sizeof(outbuf));
 
   sei();
+
+  static const uint32_t siderial_sync_ha_speed = (86400 / 86164.090530833) * 3600 * SUBSECONDS;
+  set_secs_per_hour(siderial_sync_ha_speed, 0);
 
   while (true)
   {
