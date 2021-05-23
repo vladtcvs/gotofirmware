@@ -15,6 +15,6 @@ config:
 movement:
   full_rotation_time: 180
   subseconds: 2
-connection:
+system:
   baud: 9600
-
+  fcpu: 18000000

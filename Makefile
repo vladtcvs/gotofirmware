@@ -1,10 +1,10 @@
 TARGET="attiny4313"
 
 ifeq ($(TARGET), "attiny4313")
-CFLAGS=-Os -DF_CPU=18000000UL -DDEBUG=0 -mmcu=attiny4313
+CFLAGS=-Os -DDEBUG=0 -mmcu=attiny4313
 MCU=t4313
 else ifeq ($(TARGET), "atmega328")
-CFLAGS=-mmcu=atmega328 -Os -DARDUINO -DF_CPU=16000000UL
+CFLAGS=-mmcu=atmega328 -Os -DARDUINO 
 MCU=m328p
 else
 

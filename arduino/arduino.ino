@@ -153,8 +153,6 @@ uint32_t error, delta_error;
 
 bool ha_is_x;
 
-static int32_t FULL_ROTATION_TIME_SECONDS = 180;
-
 // COMMON vars
 
 volatile bool isgoto;     // system in goto mode
@@ -631,11 +629,6 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
 
 void set_target_position(uint32_t tha, int32_t tdec)
 {
-  #define TIMER_PRESCALER 64
-  #define PSC2 0
-  #define PSC1 1
-  #define PSC0 1
-
   cli();
 
   TIMSK0 = 0;
@@ -671,7 +664,7 @@ void set_target_position(uint32_t tha, int32_t tdec)
     delta_x = dha;
     delta_y = ddec;
     ha_is_x = true;
-    counter = (uint32_t)(F_CPU / TIMER_PRESCALER / GOTO_HA_STEPS_PER_SECOND);
+    counter = GOTO_TIMER_COUNTER_HA;
   }
   else
   {
@@ -679,7 +672,7 @@ void set_target_position(uint32_t tha, int32_t tdec)
     delta_x = ddec;
     delta_y = dha;
     ha_is_x = false;
-    counter = (uint32_t)(F_CPU / TIMER_PRESCALER / GOTO_DEC_STEPS_PER_SECOND);
+    counter = GOTO_TIMER_COUNTER_DEC;
   }
 
   if (delta_x == 0)
@@ -691,15 +684,6 @@ void set_target_position(uint32_t tha, int32_t tdec)
   error = 0;
   delta_error = delta_y + 1;
 
-  /*
-   * step delta t = 1 / GOTO_HA_STEPS_PER_SECOND
-   * timer tick delta t = TIMER_PRESCALER / F_CPU
-   * counter = "step delta t" / "timer tick delta t"
-   */
-  
-  if (counter >= 65536UL)
-    counter = 65535U;
-
   isgoto = true;
   TCCR0B = 0;
 
@@ -708,15 +692,10 @@ void set_target_position(uint32_t tha, int32_t tdec)
   OCR1A = counter;
   OCR1B = 2;
   TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
-  TCCR1B = (PSC2 << CS12) | (PSC1 << CS11) | (PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 64, CTC
+  TCCR1B = (GOTO_PSC2 << CS12) | (GOTO_PSC1 << CS11) | (GOTO_PSC0 << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 64, CTC
   TCNT1 = 0;
   sei();
   
-  #undef TIMER_PRESCALER
-  #undef PSC2
-  #undef PSC1
-  #undef PSC0
-
 #if DEBUG
   {
     char buf[100];
@@ -811,12 +790,6 @@ void handle_command(void)
     case 'P': // Print position
     {
       print_pos(ha, dec);
-      return;
-    }
-    case 'R': // Set rotation time
-    {
-      read_int(&FULL_ROTATION_TIME_SECONDS);
-      print_ok();
       return;
     }
     default:  // Error
