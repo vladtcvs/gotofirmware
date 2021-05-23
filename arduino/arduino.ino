@@ -509,39 +509,12 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
   ha_secs_per_hour = abs(ha_secs_per_hour);
   dec_secs_per_hour = abs(dec_secs_per_hour);
 
-  /*  
-   * timer tick frequency = F_CPU / TIMER_PRESCALER_HA
-   * timer tick delta t = HA_TIMER_PRESCALER / F_CPU
-   * 
-   * H.A. seconds per hour = secs_per_hour / SUBSECONDS
-   * H.A. seconds per second = secs_per_hour / SUBSECONDS / 3600
-   * 
-   * H.A. steps per second  = "H.A. seconds per second" * HA_STEPS / HA_SECONDS = 
-   *                        = "H.A. seconds per second" * HA_2_STEPS_A / HA_2_STEPS_B =
-   *                        = secs_per_hour * HA_2_STEPS_A / SUBSECONDS / 3600 / HA_2_STEPS_B
-   * 
-   * step delta t = 1 / "H.A. steps per second"
-   * counter = "step delta t" / "timer tick delta t" =
-   *         = 1 / "H.A. steps per second" / (TIMER_PRESCALER_HA / F_CPU) = 
-   *         = SUBSECONDS * 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER_HA / secs_per_hour / HA_2_STEPS_A
-   *
-   *
-   * secs_per_hour / SUBSECONDS = 3600 * HA_2_STEPS_B  * F_CPU / TIMER_PRESCALER_HA / counter / HA_2_STEPS_A. 
-   * 32 <= counter <= 65535
-   * 724 <= secs_per_hour / SUBSECONDS <= 1483154
-   *
-   */
+  // H.A.
   if (ha_secs_per_hour != 0)
   {
-    #define TIMER_PRESCALER_HA 1024
-    #define PSC2_HA 1
-    #define PSC1_HA 0
-    #define PSC0_HA 1
-
     ENABLE_HA_PORT  &= ~(1<<ENABLE_HA_PIN);
 
-    const uint32_t HA_A  = (uint64_t)3600 * HA_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_HA / HA_2_STEPS_A;
-    delay_ha = HA_A / ha_secs_per_hour;
+    delay_ha = ROTATION_BASE_DELAY_HA / ha_secs_per_hour;
     
     if (delay_ha >= 65536)
       delay_ha = 65535;
@@ -553,13 +526,8 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
     OCR1A = delay_ha;
     OCR1B = 2;
     TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
-    TCCR1B = (PSC2_HA << CS12) | (PSC1_HA << CS11) | (PSC0_HA << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
+    TCCR1B = (ROTATION_PSC2_HA << CS12) | (ROTATION_PSC1_HA << CS11) | (ROTATION_PSC0_HA << CS10) | (1 << WGM12) | (0 << WGM13); // pre-scaler 1024, CTC
     TCNT1 = 0;
-
-    #undef TIMER_PRESCALER_HA
-    #undef PSC2_HA
-    #undef PSC1_HA
-    #undef PSC0_HA
   }
   else
   {
@@ -568,55 +536,23 @@ void set_secs_per_hour(int32_t ha_secs_per_hour, int32_t dec_secs_per_hour)
     TCCR1B = 0;
   }
 
-  /*  
-   * timer tick frequency = F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC
-   * timer tick delta t = TIMER_PRESCALER_DEC * TIMER_DELAY_DEC / F_CPU
-   * 
-   * Dec. seconds per hour = dec_secs_per_hour / SUBSECONDS
-   * Dec. seconds per second = dec_secs_per_hour / SUBSECONDS / 3600
-   * 
-   * H.A. steps per second  = "Dec. seconds per second" * DEC_STEPS / DEC_SECONDS = 
-   *                        = "Dec. seconds per second" * DEC_2_STEPS_A / DEC_2_STEPS_B =
-   *                        = dec_secs_per_hour * DEC_2_STEPS_A / SUBSECONDS / 3600 / DEC_2_STEPS_B
-   * 
-   * step delta t = 1 / "Dec. steps per second"
-   * counter = "step delta t" / "timer tick delta t" =
-   *         = 1 / "Dec. steps per second" / (TIMER_PRESCALER_DEC * TIMER_DELAY_DEC / F_CPU) = 
-   *         = SUBSECONDS * 3600 * DEC_2_STEPS_B  * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / secs_per_hour_dec / DEC_2_STEPS_A
-   *
-   *
-   * secs_per_hour / SUBSECONDS = 3600 * DEC_2_STEPS_B  * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / counter / DEC_2_STEPS_A.
-   * 4 <= delay_dec
-   * secs_per_hour / SUBSECONDS <= 2780914
-   *
-   */
+  // DEC
   if (dec_secs_per_hour != 0)
   {
     ENABLE_DEC_PORT &=  ~(1<<ENABLE_DEC_PIN);
-    #define TIMER_DELAY_DEC 64
-    #define TIMER_PRESCALER_DEC 1024
-    #define PSC2_DEC 1
-    #define PSC1_DEC 0
-    #define PSC0_DEC 1
 
-    const uint32_t DEC_A = (uint64_t)3600 * DEC_2_STEPS_B * SUBSECONDS * F_CPU / TIMER_PRESCALER_DEC / TIMER_DELAY_DEC / DEC_2_STEPS_A;
-    delay_dec = DEC_A / dec_secs_per_hour;
+    delay_dec = ROTATION_BASE_DELAY_DEC / ROTATION_DIVISOR_DEC / dec_secs_per_hour;
 
     if (delay_dec < 4)
       delay_dec = 4;
     
     TCCR0A = (1 << WGM01) | (0 << WGM00);
-    OCR0A = TIMER_DELAY_DEC;
+    OCR0A = ROTATION_DIVISOR_DEC;
     OCR0B = 2;
     TIMSK0 |= (1 << OCIE0A) | (1 << OCIE0B);
-    TCCR0B = (PSC2_DEC << CS02) | (PSC1_DEC << CS01) | (PSC0_DEC << CS00) | (0 << WGM02); // pre-scaler 1024, CTC
+    TCCR0B = (ROTATION_PSC2_DEC << CS02) | (ROTATION_PSC1_DEC << CS01) | (ROTATION_PSC0_DEC << CS00) | (0 << WGM02); // pre-scaler 1024, CTC
     TCNT0 = 0;
     counter_dec = 0;
-
-    #undef TIMER_PRESCALER_DEC
-    #undef PSC2_DEC
-    #undef PSC1_DEC
-    #undef PSC0_DEC
   }
   else
   {
