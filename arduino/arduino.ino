@@ -1,3 +1,4 @@
+#include "config.h"
 
 #ifdef ARDUINO
 
@@ -46,47 +47,7 @@
 
 #endif
 
-#define BAUD 9600
-
-#define UBRR_VALUE F_CPU / 16 / BAUD - 1
-
-/* Mount options */
-#define DEC_TOTAL_SECONDS            ((int32_t)(360.0*60*60))
-#define DEC_STEPPER_ANGLE            1.8
-#define DEC_STEPPER_MICROSTEP        2
-#define DEC_STEPPER_STEPS            (360.0 * DEC_STEPPER_MICROSTEP / DEC_STEPPER_ANGLE)
-#define DEC_GEAR_SMALL               20
-#define DEC_GEAR_BIG                 40
-#define DEC_MOUNT_REDUCTION_NUMBER   144.0
-#define DEC_REDUCTION_NUMBER         (DEC_MOUNT_REDUCTION_NUMBER * DEC_GEAR_BIG / DEC_GEAR_SMALL)
-#define DEC_STEPS                    ((int32_t)(DEC_STEPPER_STEPS * DEC_REDUCTION_NUMBER))
-
-// DEC_2_STEPS_A / DEC_2_STEPS_B = DEC_STEPS / DEC_TOTAL_SECONDS
-#define DEC_2_STEPS_A                4
-#define DEC_2_STEPS_B                45
-
-#define HA_TOTAL_SECONDS            ((uint32_t)(24.0*60*60))
-#define HA_STEPPER_ANGLE            1.8
-#define HA_STEPPER_MICROSTEP        2
-#define HA_STEPPER_STEPS            (360.0 * HA_STEPPER_MICROSTEP / HA_STEPPER_ANGLE)
-#define HA_GEAR_SMALL               20
-#define HA_GEAR_BIG                 40
-#define HA_MOUNT_REDUCTION_NUMBER   144.0
-#define HA_REDUCTION_NUMBER         (HA_MOUNT_REDUCTION_NUMBER * HA_GEAR_BIG / HA_GEAR_SMALL)
-#define HA_STEPS                    ((uint32_t)(HA_STEPPER_STEPS * HA_REDUCTION_NUMBER))
-
-// HA_2_STEPS_A / HA_2_STEPS_B = HA_STEPS / HA_TOTAL_SECONDS
-#define HA_2_STEPS_A                4
-#define HA_2_STEPS_B                3
-
-
-#pragma message "DEC STEPS: " XSTR(DEC_STEPS) " MICROSTEP: " XSTR(DEC_STEPPER_MICROSTEP)
-#pragma message "HA STEPS: " XSTR(HA_STEPS) " MICROSTEP: " XSTR(HA_STEPPER_MICROSTEP)
-
-#define SUBSECONDS                  2
-
-#define GOTO_HA_STEPS_PER_SECOND    (HA_STEPS / FULL_ROTATION_TIME_SECONDS)
-#define GOTO_DEC_STEPS_PER_SECOND   (DEC_STEPS / FULL_ROTATION_TIME_SECONDS)
+#define UBRR_VALUE F_CPU / 16 / (BAUD) - 1
 
 /* Step/dir */
 
@@ -175,8 +136,8 @@ volatile bool transmit = false;
 
 // HA mode vars
 
-uint32_t delay_ha;          // Delay between steps for H.A.
-uint32_t counter_ha;
+volatile uint32_t delay_ha;          // Delay between steps for H.A.
+volatile uint32_t counter_ha;
 
 volatile uint32_t delay_dec;         // Delay between steps for Dec.
 volatile uint32_t counter_dec;

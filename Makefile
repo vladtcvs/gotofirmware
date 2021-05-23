@@ -16,7 +16,7 @@ compile: firmware.bin
 firmware.bin: firmware.elf
 	avr-objcopy -O binary $< $@
 
-firmware.elf: main.c
+firmware.elf: main.c config.h
 	avr-gcc $(CFLAGS) main.c -o $@
 
 flash: firmware.bin
@@ -24,4 +24,7 @@ flash: firmware.bin
 
 clean:
 	rm -f firmware.bin firmware.elf
+
+config.h: config.yaml build_config.py
+	python3 build_config.py config.yaml $@
 
