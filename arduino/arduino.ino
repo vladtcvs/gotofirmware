@@ -162,6 +162,7 @@ int32_t  dec;              // in steps
 
 bool ha_pos_dir;          // H.A. step direction
 bool dec_pos_dir;         // Dec. step direction
+bool dec_orientation;     // Dec. positive direction
 
 static int32_t atoi32(const char *s)
 {
@@ -356,7 +357,7 @@ static void dir_ha(bool pos)
 static void dir_dec(bool pos)
 {
   dec_pos_dir = pos;
-  if (pos)
+  if (pos ^ dec_orientation)
   {
     SDPORT &= ~(1<<DECDIR);
   }
@@ -655,6 +656,20 @@ void read_int(int32_t *v)
   *v = atoi32(inbuf + i);
 }
 
+void read_bool(bool *v)
+{
+  uint8_t i = 0;
+  while (i < INBUFLEN && inbuf[i] != ' ')
+    i++;
+  i++;
+  if (i >= INBUFLEN)
+  {
+    *v = false;
+    return;
+  }
+  *v = (inbuf[i] == 'T');
+}
+
 bool read_2_int(int32_t *ha, int32_t *dec)
 {
   int i = 0;
@@ -728,6 +743,11 @@ void handle_command(void)
       print_pos(ha, dec);
       return;
     }
+    case 'W': // Set dec dir orientation
+    {
+      read_bool(&dec_orientation);
+      return;
+    }
     default:  // Error
       return;
   }
@@ -776,6 +796,7 @@ int main(void)
 
   static const uint32_t siderial_sync_ha_speed = (86400 / 86164.090530833) * 3600 * SUBSECONDS;
   set_secs_per_hour(siderial_sync_ha_speed, 0);
+  dec_orientation = false;
 
   while (true)
   {
