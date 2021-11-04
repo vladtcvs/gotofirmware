@@ -357,7 +357,7 @@ static void dir_ha(bool pos)
 static void dir_dec(bool pos)
 {
   dec_pos_dir = pos;
-  if (pos ^ dec_orientation)
+  if (pos != dec_orientation) // Logical Xor
   {
     SDPORT &= ~(1<<DECDIR);
   }
