@@ -1,0 +1,20 @@
+---
+config:
+  ha:
+    stepper_angle: 1.8
+    microstep: 16
+    worm_reduction: 144
+    gear_small: 20
+    gear_big: 40
+  dec:
+    stepper_angle: 1.8
+    microstep: 16
+    worm_reduction: 144
+    gear_small: 20
+    gear_big: 40
+movement:
+  full_rotation_time: 180
+  subseconds: 2
+system:
+  baud: 115200
+  fcpu: 16000000
