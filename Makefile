@@ -1,35 +1,52 @@
-#TARGET=attiny4313
+ifeq (${TARGET},)
+TARGET := arduino
+else
+TARGET := ${TARGET}
+endif
 
-TARGET=arduino
 ARDUINO_PORT=/dev/ttyUSB0
 
+CC = avr-gcc
+
 ifeq ($(TARGET), attiny4313)
-CFLAGS=-Os -DDEBUG=0 -mmcu=attiny4313
+CFLAGS=-Os -mmcu=attiny4313
 MCU=t4313
 else ifeq ($(TARGET), arduino)
-CFLAGS=-mmcu=atmega328 -Os -DARDUINO 
+CFLAGS=-mmcu=atmega328 -Os -DARDUINO -DDEBUG=1
 MCU=m328p
 else
 endif
 
-SRCS=src/main.c
-HEADERS=src/config.h
+SRCS =		src/main.c		\
+			src/shell.c		\
+			src/control.c 	\
+			src/command.c	\
+			src/steppers.c	\
+			src/timer.c
+
+HEADERS =	src/config.h	\
+			src/platform.h	\
+			src/err.h 		\
+			src/control.h	\
+			src/command.h	\
+			src/shell.h		\
+			src/steppers.h	\
+			src/timer.h
 
 CONFIG=configs/config.$(TARGET).yaml
 
 OBJS := $(SRCS:%.c=%.o)
 
-
 all: firmware.bin
 compile: firmware.bin
 
-src/config.h: $(CONFIG)
+src/config.h: $(CONFIG) build_config.py
 	python3.8 build_config.py $< $@
 
 config: src/config.h
 
 %.o : %.c $(HEADERS)
-	avr-gcc $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 firmware.elf: $(OBJS)
 	avr-gcc $(CFLAGS) $^ -o $@
