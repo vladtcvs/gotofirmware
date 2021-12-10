@@ -1,5 +1,7 @@
 #TARGET=attiny4313
+
 TARGET=arduino
+ARDUINO_PORT=/dev/ttyUSB0
 
 ifeq ($(TARGET), attiny4313)
 CFLAGS=-Os -DDEBUG=0 -mmcu=attiny4313
@@ -38,8 +40,12 @@ firmware.bin: firmware.elf
 flash: firmware.bin
 	avrdude -c usbasp -p $(MCU) -U flash:w:$<
 
+flash_arduino: firmware.bin
+	avrdude -carduino -p $(MCU) -U flash:w:$< -P $(ARDUINO_PORT)
+	
+
 clean:
-	rm -f firmware.bin firmware.elf
+	rm -f firmware.bin firmware.elf $(OBJS)
 
 config.h: config.yaml build_config.py
 	python3 build_config.py config.yaml $@
